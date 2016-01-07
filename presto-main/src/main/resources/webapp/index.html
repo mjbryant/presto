@@ -84,6 +84,10 @@
 </div>
 
 <script type="text/jsx">
+d3.json("/v1/info", function (info) {
+    document.getElementById('version').textContent = "Version: " + info.nodeVersion.version;
+});
+
 var Query = React.createClass({
     shortErrorType: function(errorType, errorCode)
     {

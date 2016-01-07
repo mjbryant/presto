@@ -20,33 +20,9 @@ import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 import com.facebook.presto.split.RemoteSplit;
 
-public class RemoteSplitHandleResolver
+public class RemoteHandleResolver
         implements ConnectorHandleResolver
 {
-    @Override
-    public boolean canHandle(ConnectorTableHandle tableHandle)
-    {
-        return false;
-    }
-
-    @Override
-    public boolean canHandle(ColumnHandle columnHandle)
-    {
-        return false;
-    }
-
-    @Override
-    public boolean canHandle(ConnectorSplit split)
-    {
-        return split instanceof RemoteSplit;
-    }
-
-    @Override
-    public boolean canHandle(ConnectorTransactionHandle transactionHandle)
-    {
-        return transactionHandle instanceof RemoteTransactionHandle;
-    }
-
     @Override
     public Class<? extends ConnectorTableHandle> getTableHandleClass()
     {

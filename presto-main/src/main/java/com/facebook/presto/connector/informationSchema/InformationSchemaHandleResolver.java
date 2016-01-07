@@ -19,46 +19,9 @@ import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 
-import static java.util.Objects.requireNonNull;
-
 public class InformationSchemaHandleResolver
         implements ConnectorHandleResolver
 {
-    private final String connectorId;
-
-    public InformationSchemaHandleResolver(String connectorId)
-    {
-        this.connectorId = requireNonNull(connectorId, "connectorId is null");
-    }
-
-    @Override
-    public boolean canHandle(ConnectorTableHandle tableHandle)
-    {
-        return (tableHandle instanceof InformationSchemaTableHandle) &&
-                ((InformationSchemaTableHandle) tableHandle).getConnectorId().equals(connectorId);
-    }
-
-    @Override
-    public boolean canHandle(ColumnHandle columnHandle)
-    {
-        return (columnHandle instanceof InformationSchemaColumnHandle) &&
-                ((InformationSchemaColumnHandle) columnHandle).getConnectorId().equals(connectorId);
-    }
-
-    @Override
-    public boolean canHandle(ConnectorSplit split)
-    {
-        return (split instanceof InformationSchemaSplit) &&
-                ((InformationSchemaSplit) split).getConnectorId().equals(connectorId);
-    }
-
-    @Override
-    public boolean canHandle(ConnectorTransactionHandle transactionHandle)
-    {
-        return (transactionHandle instanceof InformationSchemaTransactionHandle) &&
-                ((InformationSchemaTransactionHandle) transactionHandle).getConnectorId().equals(connectorId);
-    }
-
     @Override
     public Class<? extends ConnectorTableHandle> getTableHandleClass()
     {

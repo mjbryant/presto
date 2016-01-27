@@ -13,18 +13,20 @@
  */
 package com.facebook.presto.tests.tpch;
 
-import com.facebook.presto.spi.Connector;
-import com.facebook.presto.spi.ConnectorFactory;
 import com.facebook.presto.spi.ConnectorHandleResolver;
-import com.facebook.presto.spi.ConnectorIndexResolver;
-import com.facebook.presto.spi.ConnectorMetadata;
-import com.facebook.presto.spi.ConnectorRecordSetProvider;
-import com.facebook.presto.spi.ConnectorSplitManager;
 import com.facebook.presto.spi.NodeManager;
 import com.facebook.presto.spi.SystemTable;
-import com.facebook.presto.tpch.TpchMetadata;
+import com.facebook.presto.spi.connector.Connector;
+import com.facebook.presto.spi.connector.ConnectorFactory;
+import com.facebook.presto.spi.connector.ConnectorIndexProvider;
+import com.facebook.presto.spi.connector.ConnectorMetadata;
+import com.facebook.presto.spi.connector.ConnectorRecordSetProvider;
+import com.facebook.presto.spi.connector.ConnectorSplitManager;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
+import com.facebook.presto.spi.transaction.IsolationLevel;
 import com.facebook.presto.tpch.TpchRecordSetProvider;
 import com.facebook.presto.tpch.TpchSplitManager;
+import com.facebook.presto.tpch.TpchTransactionHandle;
 import com.google.common.collect.ImmutableSet;
 
 import java.util.Map;
@@ -60,16 +62,23 @@ public class IndexedTpchConnectorFactory
     }
 
     @Override
-    public Connector create(final String connectorId, Map<String, String> properties)
+    public Connector create(String connectorId, Map<String, String> properties)
     {
-        final int splitsPerNode = getSplitsPerNode(properties);
-        final TpchIndexedData indexedData = new TpchIndexedData(connectorId, indexSpec);
+        int splitsPerNode = getSplitsPerNode(properties);
+        TpchIndexedData indexedData = new TpchIndexedData(connectorId, indexSpec);
 
-        return new Connector() {
+        return new Connector()
+        {
             @Override
-            public ConnectorMetadata getMetadata()
+            public ConnectorTransactionHandle beginTransaction(IsolationLevel isolationLevel, boolean readOnly)
             {
-                return new TpchMetadata(connectorId);
+                return TpchTransactionHandle.INSTANCE;
+            }
+
+            @Override
+            public ConnectorMetadata getMetadata(ConnectorTransactionHandle transactionHandle)
+            {
+                return new TpchIndexMetadata(connectorId, indexedData);
             }
 
             @Override
@@ -85,9 +94,9 @@ public class IndexedTpchConnectorFactory
             }
 
             @Override
-            public ConnectorIndexResolver getIndexResolver()
+            public ConnectorIndexProvider getIndexProvider()
             {
-                return new TpchIndexResolver(connectorId, indexedData);
+                return new TpchIndexProvider(indexedData);
             }
 
             @Override

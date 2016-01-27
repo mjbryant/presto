@@ -11,20 +11,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spi;
 
-import com.facebook.presto.spi.predicate.TupleDomain;
+package com.facebook.presto.spi.type;
 
-@Deprecated
-public interface ConnectorPartition
+public enum ParameterKind
 {
-    /**
-     * Get the unique id of this partition within the scope of the table.
-     */
-    String getPartitionId();
-
-    /**
-     * Gets the TupleDomain that provides a bound on the tuples within this Partition.
-     */
-    TupleDomain<ColumnHandle> getTupleDomain();
+    TYPE_SIGNATURE,
+    NAMED_TYPE_SIGNATURE,
+    LONG_LITERAL
 }

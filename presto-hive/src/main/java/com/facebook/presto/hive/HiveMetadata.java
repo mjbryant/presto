@@ -64,7 +64,6 @@ import org.joda.time.DateTimeZone;
 
 import javax.inject.Inject;
 
-import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -96,6 +95,7 @@ import static com.facebook.presto.hive.HiveTableProperties.getPartitionedBy;
 import static com.facebook.presto.hive.HiveTableProperties.getRetentionDays;
 import static com.facebook.presto.hive.HiveType.toHiveType;
 import static com.facebook.presto.hive.HiveUtil.PRESTO_VIEW_FLAG;
+import static com.facebook.presto.hive.HiveUtil.annotateColumnComment;
 import static com.facebook.presto.hive.HiveUtil.decodeViewData;
 import static com.facebook.presto.hive.HiveUtil.encodeViewData;
 import static com.facebook.presto.hive.HiveUtil.hiveColumnHandles;
@@ -660,7 +660,7 @@ public class HiveMetadata
                         .map(partitionUpdate -> createPartition(table, partitionUpdate))
                         .forEach(partitionCommitter::addPartition);
             }
-            partitionCommitter.close();
+            partitionCommitter.flush();
         }
         catch (Throwable throwable) {
             partitionCommitter.abort();
@@ -706,7 +706,6 @@ public class HiveMetadata
     }
 
     private static class PartitionCommitter
-            implements Closeable
     {
         private final String schemaName;
         private final String tableName;
@@ -737,8 +736,7 @@ public class HiveMetadata
             }
         }
 
-        @Override
-        public void close()
+        public void flush()
         {
             if (!batch.isEmpty()) {
                 addBatch();
@@ -836,7 +834,7 @@ public class HiveMetadata
                     }
                 }
             }
-            partitionCommitter.close();
+            partitionCommitter.flush();
             for (CompletableFuture<?> fileRenameFuture : fileRenameFutures) {
                 MoreFutures.getFutureValue(fileRenameFuture, PrestoException.class);
             }
@@ -1359,11 +1357,11 @@ public class HiveMetadata
         }
         Map<String, String> columnComment = builder.build();
 
-        return input -> new ColumnMetadata(
-                input.getName(),
-                typeManager.getType(input.getTypeSignature()),
-                input.isPartitionKey(),
-                columnComment.get(input.getName()),
+        return handle -> new ColumnMetadata(
+                handle.getName(),
+                typeManager.getType(handle.getTypeSignature()),
+                handle.isPartitionKey(),
+                annotateColumnComment(columnComment.get(handle.getName()), handle.isPartitionKey()),
                 false);
     }
 }

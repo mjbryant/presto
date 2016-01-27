@@ -31,6 +31,7 @@ import com.facebook.presto.spi.connector.ConnectorPageSourceProvider;
 import com.facebook.presto.spi.connector.ConnectorRecordSetProvider;
 import com.facebook.presto.spi.connector.ConnectorRecordSinkProvider;
 import com.facebook.presto.spi.connector.ConnectorSplitManager;
+import com.facebook.presto.spi.procedure.Procedure;
 import com.facebook.presto.split.PageSinkManager;
 import com.facebook.presto.split.PageSourceManager;
 import com.facebook.presto.split.RecordPageSinkProvider;
@@ -120,6 +121,7 @@ public class ConnectorManager
         }
     }
 
+    @Deprecated
     public void addConnectorFactory(com.facebook.presto.spi.ConnectorFactory connectorFactory)
     {
         addConnectorFactory(new LegacyTransactionConnectorFactory(connectorFactory));
@@ -164,7 +166,7 @@ public class ConnectorManager
         addConnectorInternal(ConnectorType.STANDARD, catalogName, connectorId, connector);
 
         String informationSchemaId = makeInformationSchemaConnectorId(connectorId);
-        addConnectorInternal(ConnectorType.INFORMATION_SCHEMA, catalogName, informationSchemaId, new InformationSchemaConnector(informationSchemaId, catalogName, nodeManager, metadataManager));
+        addConnectorInternal(ConnectorType.INFORMATION_SCHEMA, catalogName, informationSchemaId, new InformationSchemaConnector(catalogName, nodeManager, metadataManager));
 
         String systemId = makeSystemTablesConnectorId(connectorId);
         addConnectorInternal(ConnectorType.SYSTEM, catalogName, systemId, new SystemConnector(
@@ -189,6 +191,9 @@ public class ConnectorManager
 
         Set<SystemTable> systemTables = connector.getSystemTables();
         requireNonNull(systemTables, "Connector %s returned a null system tables set");
+
+        Set<Procedure> procedures = connector.getProcedures();
+        requireNonNull(procedures, "Connector %s returned a null procedures set");
 
         ConnectorPageSourceProvider connectorPageSourceProvider = null;
         try {
@@ -267,6 +272,10 @@ public class ConnectorManager
 
         splitManager.addConnectorSplitManager(connectorId, connectorSplitManager);
         pageSourceManager.addConnectorPageSourceProvider(connectorId, connectorPageSourceProvider);
+
+        for (Procedure procedure : procedures) {
+            metadataManager.getProcedureRegistry().addProcedure(catalogName, procedure);
+        }
 
         if (connectorPageSinkProvider != null) {
             pageSinkManager.addConnectorPageSinkProvider(connectorId, connectorPageSinkProvider);

@@ -186,6 +186,9 @@ import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.TypeUtils.writeNativeValue;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypes;
 import static com.facebook.presto.sql.analyzer.ExpressionAnalyzer.getExpressionTypesFromInput;
+import static com.facebook.presto.sql.planner.SystemPartitioningHandle.COORDINATOR_DISTRIBUTION;
+import static com.facebook.presto.sql.planner.SystemPartitioningHandle.FIXED_BROADCAST_DISTRIBUTION;
+import static com.facebook.presto.sql.planner.SystemPartitioningHandle.SINGLE_DISTRIBUTION;
 import static com.facebook.presto.sql.planner.plan.JoinNode.Type.FULL;
 import static com.facebook.presto.sql.planner.plan.JoinNode.Type.RIGHT;
 import static com.facebook.presto.sql.planner.plan.TableWriterNode.CreateHandle;
@@ -212,6 +215,7 @@ public class LocalExecutionPlanner
 
     private final PageSourceProvider pageSourceProvider;
     private final IndexManager indexManager;
+    private final NodePartitioningManager nodePartitioningManager;
     private final PageSinkManager pageSinkManager;
     private final ExchangeClientSupplier exchangeClientSupplier;
     private final ExpressionCompiler compiler;
@@ -226,6 +230,7 @@ public class LocalExecutionPlanner
             SqlParser sqlParser,
             PageSourceProvider pageSourceProvider,
             IndexManager indexManager,
+            NodePartitioningManager nodePartitioningManager,
             PageSinkManager pageSinkManager,
             ExchangeClientSupplier exchangeClientSupplier,
             ExpressionCompiler compiler,
@@ -236,6 +241,7 @@ public class LocalExecutionPlanner
         requireNonNull(compilerConfig, "compilerConfig is null");
         this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
         this.indexManager = requireNonNull(indexManager, "indexManager is null");
+        this.nodePartitioningManager = requireNonNull(nodePartitioningManager, "nodePartitioningManager is null");
         this.exchangeClientSupplier = exchangeClientSupplier;
         this.metadata = requireNonNull(metadata, "metadata is null");
         this.sqlParser = requireNonNull(sqlParser, "sqlParser is null");
@@ -251,18 +257,18 @@ public class LocalExecutionPlanner
     public LocalExecutionPlan plan(
             Session session,
             PlanNode plan,
-            List<Symbol> outputLayout,
             Map<Symbol, Type> types,
-            Optional<PartitionFunctionBinding> partitionFunctionBinding,
+            PartitionFunctionBinding functionBinding,
             SharedBuffer sharedBuffer,
             boolean singleNode,
             boolean allowLocalParallel)
     {
-        if (!partitionFunctionBinding.isPresent()) {
+        List<Symbol> outputLayout = functionBinding.getOutputLayout();
+        if (functionBinding.getPartitioningHandle().equals(FIXED_BROADCAST_DISTRIBUTION) ||
+                functionBinding.getPartitioningHandle().equals(SINGLE_DISTRIBUTION) ||
+                functionBinding.getPartitioningHandle().equals(COORDINATOR_DISTRIBUTION)) {
             return plan(session, plan, outputLayout, types, new TaskOutputFactory(sharedBuffer), singleNode, allowLocalParallel);
         }
-
-        PartitionFunctionBinding functionBinding = partitionFunctionBinding.get();
 
         // We can convert the symbols directly into channels, because the root must be a sink and therefore the layout is fixed
         List<Integer> partitionChannels;
@@ -280,8 +286,7 @@ public class LocalExecutionPlanner
                     .collect(toImmutableList());
         }
 
-        PartitionFunction partitionFunction = functionBinding.getFunctionHandle().createPartitionFunction(functionBinding, partitionChannelTypes);
-
+        PartitionFunction partitionFunction = nodePartitioningManager.getPartitionFunction(session, functionBinding, partitionChannelTypes);
         OptionalInt nullChannel = OptionalInt.empty();
         if (functionBinding.isReplicateNulls()) {
             checkArgument(functionBinding.getPartitioningColumns().size() == 1);
@@ -820,7 +825,7 @@ public class LocalExecutionPlanner
                 return planGlobalAggregation(context.getNextOperatorId(), node, source);
             }
 
-            if (node.getStep() == Step.INTERMEDIATE) {
+            if (needsLocalGather(node)) {
                 LocalExecutionPlanContext intermediateContext = context.createSubContext();
                 intermediateContext.setInputDriver(context.isInputDriver());
 
@@ -887,6 +892,22 @@ public class LocalExecutionPlanner
             operation = addInMemoryExchange(context, node.getId(), operation, parallelContext);
 
             return operation;
+        }
+
+        private boolean needsLocalGather(AggregationNode node)
+        {
+            // intermediate is used for node local aggregations
+            if (node.getStep() == Step.INTERMEDIATE) {
+                return true;
+            }
+
+            // a final aggregation with a partial as a source needs is used to signal a plan that is
+            // distributed on the grouped keys but not partitioned on the group keys.
+            if (node.getStep() != Step.FINAL || node.getSources().size() != 1) {
+                return false;
+            }
+            PlanNode source = node.getSources().get(0);
+            return source instanceof AggregationNode && ((AggregationNode) source).getStep() == Step.PARTIAL;
         }
 
         @Override

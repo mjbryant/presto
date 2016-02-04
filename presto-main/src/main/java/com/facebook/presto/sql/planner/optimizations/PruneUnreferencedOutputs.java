@@ -18,6 +18,7 @@ import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.DependencyExtractor;
+import com.facebook.presto.sql.planner.PartitionFunctionBinding;
 import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
 import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.planner.SymbolAllocator;
@@ -110,8 +111,8 @@ public class PruneUnreferencedOutputs
         public PlanNode visitExchange(ExchangeNode node, RewriteContext<Set<Symbol>> context)
         {
             Set<Symbol> expectedOutputSymbols = Sets.newHashSet(context.get());
-            node.getHashSymbol().ifPresent(expectedOutputSymbols::add);
-            node.getPartitionKeys().ifPresent(expectedOutputSymbols::addAll);
+            node.getPartitionFunction().getHashColumn().ifPresent(expectedOutputSymbols::add);
+            expectedOutputSymbols.addAll(node.getPartitionFunction().getPartitioningColumns());
 
             List<List<Symbol>> inputsBySource = new ArrayList<>(node.getInputs().size());
             for (int i = 0; i < node.getInputs().size(); i++) {
@@ -129,6 +130,15 @@ public class PruneUnreferencedOutputs
                 }
             }
 
+            // newOutputSymbols contains all partition and hash symbols so simply swap the output layout
+            PartitionFunctionBinding partitionFunctionBinding = new PartitionFunctionBinding(
+                    node.getPartitionFunction().getPartitioningHandle(),
+                    newOutputSymbols,
+                    node.getPartitionFunction().getPartitioningColumns(),
+                    node.getPartitionFunction().getHashColumn(),
+                    node.getPartitionFunction().isReplicateNulls(),
+                    node.getPartitionFunction().getBucketToPartition());
+
             ImmutableList.Builder<PlanNode> rewrittenSources = ImmutableList.<PlanNode>builder();
             for (int i = 0; i < node.getSources().size(); i++) {
                 ImmutableSet.Builder<Symbol> expectedInputs = ImmutableSet.<Symbol>builder()
@@ -142,9 +152,8 @@ public class PruneUnreferencedOutputs
             return new ExchangeNode(
                     node.getId(),
                     node.getType(),
-                    node.getPartitionFunction(),
+                    partitionFunctionBinding,
                     rewrittenSources.build(),
-                    newOutputSymbols,
                     inputsBySource);
         }
 
@@ -539,9 +548,22 @@ public class PruneUnreferencedOutputs
             if (node.getSampleWeightSymbol().isPresent()) {
                 expectedInputs.add(node.getSampleWeightSymbol().get());
             }
+            if (node.getPartitionFunction().isPresent()) {
+                PartitionFunctionBinding functionBinding = node.getPartitionFunction().get();
+                expectedInputs.addAll(functionBinding.getPartitioningColumns());
+                functionBinding.getHashColumn().ifPresent(expectedInputs::add);
+            }
             PlanNode source = context.rewrite(node.getSource(), expectedInputs.build());
 
-            return new TableWriterNode(node.getId(), source, node.getTarget(), node.getColumns(), node.getColumnNames(), node.getOutputSymbols(), node.getSampleWeightSymbol());
+            return new TableWriterNode(
+                    node.getId(),
+                    source,
+                    node.getTarget(),
+                    node.getColumns(),
+                    node.getColumnNames(),
+                    node.getOutputSymbols(),
+                    node.getSampleWeightSymbol(),
+                    node.getPartitionFunction());
         }
 
         @Override
@@ -581,7 +603,7 @@ public class PruneUnreferencedOutputs
                 rewrittenSubPlans.add(context.rewrite(node.getSources().get(i), expectedInputSymbols.build()));
             }
 
-            return new UnionNode(node.getId(), rewrittenSubPlans.build(), rewrittenSymbolMapping);
+            return new UnionNode(node.getId(), rewrittenSubPlans.build(), rewrittenSymbolMapping, ImmutableList.copyOf(rewrittenSymbolMapping.keySet()));
         }
     }
 }

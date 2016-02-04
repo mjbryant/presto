@@ -634,26 +634,14 @@ public abstract class AbstractTestQueries
     public void testApproximateCountDistinct()
             throws Exception
     {
-        MaterializedResult actual = computeActual("SELECT approx_distinct(custkey) FROM orders");
-
-        MaterializedResult expected = resultBuilder(getSession(), BIGINT)
-                .row(996)
-                .build();
-
-        assertEqualsIgnoreOrder(actual.getMaterializedRows(), expected.getMaterializedRows());
-    }
-
-    @Test
-    public void testApproximateCountDistinctWithStandardError()
-            throws Exception
-    {
-        MaterializedResult actual = computeActual("SELECT approx_distinct(custkey, 0.023) FROM orders");
-
-        MaterializedResult expected = resultBuilder(getSession(), BIGINT)
-                .row(996)
-                .build();
-
-        assertEqualsIgnoreOrder(actual.getMaterializedRows(), expected.getMaterializedRows());
+        assertQuery("SELECT approx_distinct(custkey) FROM orders", "SELECT 996");
+        assertQuery("SELECT approx_distinct(custkey, 0.023) FROM orders", "SELECT 996");
+        assertQuery("SELECT approx_distinct(CAST(custkey AS DOUBLE)) FROM orders", "SELECT 1031");
+        assertQuery("SELECT approx_distinct(CAST(custkey AS DOUBLE), 0.023) FROM orders", "SELECT 1031");
+        assertQuery("SELECT approx_distinct(CAST(custkey AS VARCHAR)) FROM orders", "SELECT 1011");
+        assertQuery("SELECT approx_distinct(CAST(custkey AS VARCHAR), 0.023) FROM orders", "SELECT 1011");
+        assertQuery("SELECT approx_distinct(to_utf8(CAST(custkey AS VARCHAR))) FROM orders", "SELECT 1011");
+        assertQuery("SELECT approx_distinct(to_utf8(CAST(custkey AS VARCHAR)), 0.023) FROM orders", "SELECT 1011");
     }
 
     @Test
@@ -3512,7 +3500,7 @@ public abstract class AbstractTestQueries
         assertQuery("SELECT orderkey, CASE orderstatus WHEN 'O' THEN 'a' END FROM orders");
     }
 
-    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "line 1:67: All CASE results must be the same type: varchar")
+    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:67: All CASE results must be the same type: varchar(1)\\E")
     public void testCaseNoElseInconsistentResultType()
         throws Exception
     {
@@ -3861,7 +3849,7 @@ public abstract class AbstractTestQueries
                 .row("orderkey", "bigint", "")
                 .row("custkey", "bigint", "")
                 .row("orderstatus", "varchar", "")
-                .row("totalprice", "double", "")
+                .row("totalprice", "double",  "")
                 .row("orderdate", "date", "")
                 .row("orderpriority", "varchar", "")
                 .row("clerk", "varchar", "")
@@ -3925,8 +3913,8 @@ public abstract class AbstractTestQueries
         assertEquals(functions.get("rank").asList().get(0).getField(3), "window");
 
         assertTrue(functions.containsKey("rank"), "Expected function names " + functions + " to contain 'split_part'");
-        assertEquals(functions.get("split_part").asList().get(0).getField(1), "varchar");
-        assertEquals(functions.get("split_part").asList().get(0).getField(2), "varchar, varchar, bigint");
+        assertEquals(functions.get("split_part").asList().get(0).getField(1), "varchar(x)");
+        assertEquals(functions.get("split_part").asList().get(0).getField(2), "varchar(x), varchar, bigint");
         assertEquals(functions.get("split_part").asList().get(0).getField(3), "scalar");
 
         assertFalse(functions.containsKey("like"), "Expected function names " + functions + " not to contain 'like'");
@@ -4952,7 +4940,7 @@ public abstract class AbstractTestQueries
         computeActual("SELECT greatest(rgb(255, 0, 0))");
     }
 
-    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:10: '<>' cannot be applied to bigint, varchar\\E")
+    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:10: '<>' cannot be applied to bigint, varchar(1)\\E")
     public void testTypeMismatch()
     {
         computeActual("SELECT 1 <> 'x'");
@@ -4961,16 +4949,19 @@ public abstract class AbstractTestQueries
     @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:8: Unknown type: ARRAY(FOO)\\E")
     public void testInvalidType()
     {
-        computeActual("SELECT CAST(null AS array<foo>)");
+        computeActual("SELECT CAST(null AS array(foo))");
     }
 
-    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:21: '+' cannot be applied to varchar, bigint\\E")
+    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:21: '+' cannot be applied to varchar(2147483647), bigint\\E")
     public void testInvalidTypeInfixOperator()
     {
+        // Comment on why error message references varchar(214783647) instead of varchar(2) which seems expected result type for concatenation in expression.
+        // Currently variable argument functions do not play well with arguments using parametrized types.
+        // The variable argument functions mechanism requires that all the arguments are of exactly same type. We cannot enforce that base must match but parameters may differ.
         computeActual("SELECT ('a' || 'z') + (3 * 4) / 5");
     }
 
-    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:12: Cannot check if varchar is BETWEEN bigint and varchar\\E")
+    @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "\\Qline 1:12: Cannot check if varchar(1) is BETWEEN bigint and varchar(1)\\E")
     public void testInvalidTypeBetweenOperator()
     {
         computeActual("SELECT 'a' BETWEEN 3 AND 'z'");

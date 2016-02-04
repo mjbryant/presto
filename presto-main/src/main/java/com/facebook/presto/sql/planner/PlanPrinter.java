@@ -26,7 +26,7 @@ import com.facebook.presto.spi.predicate.Marker;
 import com.facebook.presto.spi.predicate.Range;
 import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.sql.planner.PlanFragment.PlanDistribution;
+import com.facebook.presto.sql.FunctionInvoker;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.DeleteNode;
 import com.facebook.presto.sql.planner.plan.DistinctLimitNode;
@@ -73,17 +73,16 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import io.airlift.slice.Slice;
 
-import java.lang.invoke.MethodHandle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.planner.DomainUtils.simplifyDomain;
+import static com.facebook.presto.sql.planner.SystemPartitioningHandle.SINGLE_DISTRIBUTION;
 import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.lang.String.format;
@@ -133,28 +132,25 @@ public class PlanPrinter
         for (PlanFragment fragment : plan.getAllFragments()) {
             builder.append(format("Fragment %s [%s]\n",
                     fragment.getId(),
-                    fragment.getDistribution()));
+                    fragment.getPartitioning()));
 
+            PartitionFunctionBinding partitionFunction = fragment.getPartitionFunction();
             builder.append(indentString(1))
                     .append(format("Output layout: [%s]\n",
-                            Joiner.on(", ").join(fragment.getOutputLayout())));
+                            Joiner.on(", ").join(partitionFunction.getOutputLayout())));
 
-            if (fragment.getPartitionFunction().isPresent()) {
-                PartitionFunctionBinding partitionFunction = fragment.getPartitionFunction().get();
-                PartitionFunctionHandle outputPartitioning = partitionFunction.getFunctionHandle();
-                boolean replicateNulls = partitionFunction.isReplicateNulls();
-                List<Symbol> symbols = partitionFunction.getPartitioningColumns();
-                builder.append(indentString(1));
-                if (replicateNulls) {
-                    builder.append(format("Output partitioning: %s (replicate nulls) [%s]\n",
-                            outputPartitioning,
-                            Joiner.on(", ").join(symbols)));
-                }
-                else {
-                    builder.append(format("Output partitioning: %s [%s]\n",
-                            outputPartitioning,
-                            Joiner.on(", ").join(symbols)));
-                }
+            boolean replicateNulls = partitionFunction.isReplicateNulls();
+            List<Symbol> symbols = partitionFunction.getPartitioningColumns();
+            builder.append(indentString(1));
+            if (replicateNulls) {
+                builder.append(format("Output partitioning: %s (replicate nulls) [%s]\n",
+                        partitionFunction.getPartitioningHandle(),
+                        Joiner.on(", ").join(symbols)));
+            }
+            else {
+                builder.append(format("Output partitioning: %s [%s]\n",
+                        partitionFunction.getPartitioningHandle(),
+                        Joiner.on(", ").join(symbols)));
             }
 
             builder.append(textLogicalPlan(fragment.getRoot(), fragment.getSymbols(), metadata, session, 1))
@@ -170,10 +166,9 @@ public class PlanPrinter
                 new PlanFragmentId("graphviz_plan"),
                 plan,
                 types,
-                plan.getOutputSymbols(),
-                PlanDistribution.SINGLE,
+                SINGLE_DISTRIBUTION,
                 plan.getId(),
-                Optional.empty());
+                new PartitionFunctionBinding(SINGLE_DISTRIBUTION, plan.getOutputSymbols(), ImmutableList.of()));
         return GraphvizPrinter.printLogical(ImmutableList.of(fragment));
     }
 
@@ -621,7 +616,7 @@ public class PlanPrinter
 
         private String formatOutputs(Iterable<Symbol> symbols)
         {
-            return Joiner.on(", ").join(Iterables.transform(symbols, input -> input + ":" + types.get(input)));
+            return Joiner.on(", ").join(Iterables.transform(symbols, input -> input + ":" + types.get(input).getDisplayName()));
         }
 
         private void printConstraint(int indent, ColumnHandle column, TupleDomain<ColumnHandle> constraint)
@@ -691,10 +686,10 @@ public class PlanPrinter
         private String castToVarchar(Type type, Object value)
         {
             Signature coercion = metadata.getFunctionRegistry().getCoercion(type, VARCHAR);
-            MethodHandle method = metadata.getFunctionRegistry().getScalarFunctionImplementation(coercion).getMethodHandle();
 
             try {
-                return ((Slice) method.invokeWithArguments(value)).toStringUtf8();
+                Slice coerced = (Slice) new FunctionInvoker(metadata.getFunctionRegistry()).invoke(coercion, session.toConnectorSession(), value);
+                return coerced.toStringUtf8();
             }
             catch (OperatorNotFoundException e) {
                 return "<UNREPRESENTABLE VALUE>";
